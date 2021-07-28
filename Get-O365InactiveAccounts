@@ -10,9 +10,9 @@
 
 
 <#
-# You will need to create an App Registration with the following Application permissions:
-DeviceManagementManagedDevices.PrivilegedOperations.All
-DeviceManagementManagedDevices.ReadWrite.All
+REQUIREMENTS:
+You will need to create an App Registration with the following Application permissions:
+  Reports.Read.All
 Then create a Client Secret and grab the Application ID and enter them below where indicated
 #>
 
