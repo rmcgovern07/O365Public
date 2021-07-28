@@ -1,0 +1,158 @@
+<#
+.SYNOPSIS
+    Generates a report that checks Office 365 activity and lists inactive users    
+.DESCRIPTION
+    Generates a report that checks Office 365 activity and lists inactive users.
+    It looks to see if users have used Office 365 within a certain amount of days.
+.EXAMPLE
+    .\Get-RPInactiveO365Accounts.ps1
+#>
+
+# A lot of this is stolen from - https://www.altitude365.com/2018/09/23/retrieve-and-analyze-office-365-usage-data-with-powershell-and-microsoft-graph-api/
+# Get API URLs from here - https://docs.microsoft.com/en-us/graph/api/reportroot-getoffice365activationsuserdetail?view=graph-rest-1.0
+
+function Get-GraphApi {
+    param (
+    [parameter(Mandatory=$true)]
+    $ClientID,
+   
+   [parameter(Mandatory=$true)]
+    $ClientSecret,
+   
+   [parameter(Mandatory=$true)]
+    $TenantName,
+   
+   [parameter(Mandatory=$true)]
+    $Url
+    )
+   
+   
+    # Graph API URLs.
+    $LoginUrl = "https://login.microsoft.com"
+    $RresourceUrl = "https://graph.microsoft.com"
+    
+    
+    # Compose REST request.
+    $Body = @{ grant_type = "client_credentials"; resource = $RresourceUrl; client_id = $ClientID; client_secret = $ClientSecret }
+    $OAuth = Invoke-RestMethod -Method Post -Uri $LoginUrl/$TenantName/oauth2/token?api-version=1.0 -Body $Body
+    
+    
+    # Check if authentication is successfull.
+    if ($OAuth.access_token -eq $null)
+    {
+    Write-Error "No Access Token"
+    }
+    else
+    {
+    # Perform REST call.
+    $HeaderParams = @{ 'Authorization' = "$($OAuth.token_type) $($OAuth.access_token)" }
+    $Result = (Invoke-WebRequest -UseBasicParsing -Headers $HeaderParams -Uri $Url)
+   
+   # Return result.
+    $Result
+    }
+}
+
+
+function Get-UsageReportData {
+    param (
+    [parameter(Mandatory = $true)]
+    [string]$ClientID,
+
+    [parameter(Mandatory = $true)]
+    [string]$ClientSecret,
+
+    [parameter(Mandatory = $true)]
+    [string]$TenantName,
+
+    [parameter(Mandatory=$true)]
+    $GraphUrl
+    )
+    
+    try {
+        # Call Microsoft Graph and extract CSV content and convert data to PowerShell objects.
+        ((Get-GraphApi -ClientID $ClientID -ClientSecret $ClientSecret -TenantName $TenantName -Url $GraphUrl).RawContent -split "\?\?\?")[1] | ConvertFrom-Csv
+        }
+        catch {
+        $error
+        }
+}
+
+
+## Variables to define
+$FileName = "c:\temp\Inactive_O365_Accounts" + (get-date -f yyyyMMdd_HHmm) + ".csv" # Filename and path of where you want the report to go
+$ClientID = "<unique-application-id>" # Application ID from your App Registration.
+$ClientSecret = "<client-secret>" #  The Client Secret from your App Registration.
+$TenantName = "<tenant>.onmicrosoft.com" # Your tenant's "onmicrosoft" domain name.
+# Threshold for how long ago you consider an account inactive. Default is 90, meaning that it will only report on people whose last activity was over 90 days ago. 
+# If user has not used Exchange, Teams, OneDrive, or SharePoint in the last xx days, then they are included in the report
+$DaysAgo = ((Get-Date).AddDays(-90)).toString('yyyy-MM-dd')
+# End custom variables
+
+
+$GraphUrl = "https://graph.microsoft.com/v1.0/reports/getOffice365ActiveUserDetail(period='D90')" # The Graph URL to retrieve data.
+# Pull the info based on the variables above
+$UsageData = Get-UsageReportData -ClientID $ClientID -ClientSecret $ClientSecret -TenantName $TenantName -GraphUrl $GraphUrl
+# Add column to array
+$UsageData | Add-Member -MemberType NoteProperty -Name "Office Last Activation Date"  -Value ""
+
+# Get Office Activation Date and add to UsageData array
+$OfficeGraphurl = "https://graph.microsoft.com/v1.0/reports/getOffice365ActivationsUserDetail"
+$OfficeData = Get-UsageReportData -ClientID $ClientID -ClientSecret $ClientSecret -TenantName $TenantName -GraphUrl $OfficeGraphUrl
+
+# Create some variables to make the properties easier to work with
+$UserPN = "User Principal Name"
+$OfficeActDate = "Office Last Activation Date"
+$LastActDate = "Last Activated Date"
+$ProductType = "Product Type"
+$lastexch = "Exchange Last Activity Date"
+$LastOD = "OneDrive Last Activity Date"
+$LastSP = "SharePoint Last Activity Date"
+$LastTeams = "Teams Last Activity Date"
+$HasExchange = "Has Exchange License"
+
+# Some UPNs come in as "(Unknown)". Need to filter them out to save time and avoid errors.
+$UsageData = $UsageData | where {$_.$UserPN -ne '(Unknown)'}
+$OfficeData = $OfficeData | where {$_.$UserPN -ne '(Unknown)'}
+
+# Activity dates come down as strings so they can't be used for comparison.
+# This code converts all users' last activity dates to DateTime values so that they can be used for comparison later on.
+Foreach ($User in $UsageData) {
+    $UPN = $User.$UserPN
+    $OfficeUser = $OfficeData | where {$_.$UserPN -eq $UPN} 
+    $UserActDate = $OfficeUser | where {"$_.$ProductType" -like "*MICROSOFT 365 APPS FOR ENTERPRISE*"}
+    If ($UserActDate.$LastActDate) {
+        $User.$OfficeActDate = $UserActDate.$LastActDate
+    }
+    If ($User.$LastExch) {
+        $User.$LastExch = [DateTime] $User.$LastExch
+    }
+    If ($User.$LastOD) {
+        $User.$LastOD = [DateTime] $User.$LastOD
+    }
+    If ($User.$LastSP) {
+        $User.$LastSP = [DateTime] $User.$LastSP
+    }
+    If ($User.$LastTeams) {
+        $User.$LastTeams = [DateTime] $User.$LastTeams
+    }
+    # Sometimes there are multiple dates. Grab the last one. This should probably be modified to look for most recent date and use that.
+    If ($User.$OfficeActDate) {
+        $User.$OfficeActDate = [DateTime] $User.$OfficeActDate
+    }
+
+}
+
+
+# Pull only the users with no 365 activity within the last xx days
+$No365Activity = $UsageData | 
+    where {($_.$lastexch -lt $DaysAgo) -and ($_.$HasExchange -eq "True") -and ($_.$LastOD -lt $DaysAgo) -and ($_.$LastSP -lt $DaysAgo) -and ($_.$LastTeams -lt $DaysAgo) -and ($_.$OfficeActDate -lt $DaysAgo)} |
+    select "User Principal Name","Display Name",$HasExchange,$LastExch,$LastOD,$LastSP,$LastTeams,$OfficeActDate
+
+
+# Export the results to a file
+Write-Host "Amount of licensed users with no recent 365 activity - " $No365Activity.count
+
+$No365Activity | Export-Csv -NoTypeInformation $FileName
+
+Write-Host "Results have been exported to $FileName"
