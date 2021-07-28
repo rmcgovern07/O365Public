@@ -8,6 +8,15 @@
     .\Get-RPInactiveO365Accounts.ps1
 #>
 
+
+<#
+# You will need to create an App Registration with the following Application permissions:
+DeviceManagementManagedDevices.PrivilegedOperations.All
+DeviceManagementManagedDevices.ReadWrite.All
+Then create a Client Secret and grab the Application ID and enter them below where indicated
+#>
+
+
 # A lot of this is stolen from - https://www.altitude365.com/2018/09/23/retrieve-and-analyze-office-365-usage-data-with-powershell-and-microsoft-graph-api/
 # Get API URLs from here - https://docs.microsoft.com/en-us/graph/api/reportroot-getoffice365activationsuserdetail?view=graph-rest-1.0
 
